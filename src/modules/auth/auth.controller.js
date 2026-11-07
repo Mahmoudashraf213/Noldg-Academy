@@ -3,9 +3,9 @@ import { fanoutNotification, notificationManagers } from "../notification/notifi
 import { AppError } from "../../utils/appError.js";
 import { messages } from "../../utils/constant/messages.js";
 import { generateToken, verifyToken } from "../../utils/token.js";
-import { Device, User, prisma } from "../../../db/index.js";
+import { User, prisma } from "../../../db/index.js";
 import { deviceStatuses, userStatuses } from "../../utils/constant/enum.js";
-import { getClientDeviceInfo, getDeviceLimit } from "../user/device.utils.js";
+import { getClientDeviceInfo } from "../user/device.utils.js";
 
 // Remove credentials and session secrets before returning an account to the client.
 const publicUser = (user) => {
@@ -93,69 +93,29 @@ export const login = async (req, res, next) => {
     return next(new AppError(messages.user.accountSuspended, 403));
   }
 
-  const now = new Date();
-  const hasActiveSession =
-    user.activeDeviceId &&
-    (!user.activeSessionExpiresAt || user.activeSessionExpiresAt > now);
-  if (hasActiveSession && user.activeDeviceId !== deviceId) {
-    return next(new AppError(messages.auth.accountOpenOnAnotherDevice, 409));
-  }
-
-  const activeDevice = await Device.findFirst({
-    where: {
-      userId: user.id,
-      deviceId,
-      status: deviceStatuses.ACTIVE,
-    },
-  });
-
-  if (
-    !hasActiveSession &&
-    user.activeDeviceId &&
-    user.activeDeviceId !== deviceId
-  ) {
-    await Device.updateMany({
-      where: {
-        userId: user.id,
-        deviceId: user.activeDeviceId,
-        status: deviceStatuses.ACTIVE,
-      },
-      data: { status: deviceStatuses.INACTIVE },
-    });
-  }
-
-  if (!activeDevice) {
-    const registeredDeviceCount = await Device.count({
-      where: { userId: user.id, status: deviceStatuses.ACTIVE },
-    });
-
-    if (registeredDeviceCount >= getDeviceLimit()) {
-      return next(new AppError(messages.auth.deviceLimitReached, 409));
+  const token = await prisma.$transaction(async (transaction) => {
+    // Serialize logins so only the latest session remains valid.
+    await transaction.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${user.id} FOR UPDATE`;
+    const currentUser = await transaction.user.findUnique({ where: { id: user.id } });
+    if (!currentUser || currentUser.password !== user.password) {
+      throw new AppError(messages.user.invalidCredentials, 401);
     }
-  }
+    if (currentUser.status !== userStatuses.ACTIVE) {
+      throw new AppError(messages.user.accountSuspended, 403);
+    }
 
-  const nextSessionVersion = user.sessionVersion + 1;
-  const token = createToken(
-    { ...user, sessionVersion: nextSessionVersion },
-    deviceId
-  );
-  const tokenPayload = verifyToken(token);
-  const activeSessionExpiresAt = tokenPayload.exp === undefined
-    ? null
-    : new Date(tokenPayload.exp * 1000);
+    const now = new Date();
+    const sessionToken = createToken(
+      { ...currentUser, sessionVersion: currentUser.sessionVersion + 1 },
+      deviceId
+    );
+    const tokenPayload = verifyToken(sessionToken);
+    const activeSessionExpiresAt = tokenPayload.exp === undefined
+      ? null
+      : new Date(tokenPayload.exp * 1000);
 
-  const activeUser = await prisma.$transaction(async (transaction) => {
-    const sessionUpdate = await transaction.user.updateMany({
-      where: {
-        id: user.id,
-        status: userStatuses.ACTIVE,
-        sessionVersion: user.sessionVersion,
-        OR: [
-          { activeDeviceId: deviceId },
-          { activeSessionExpiresAt: { lte: now } },
-          { activeSessionExpiresAt: null },
-        ],
-      },
+    await transaction.user.update({
+      where: { id: user.id },
       data: {
         sessionVersion: { increment: 1 },
         activeDeviceId: deviceId,
@@ -163,7 +123,10 @@ export const login = async (req, res, next) => {
       },
     });
 
-    if (sessionUpdate.count !== 1) return false;
+    await transaction.device.updateMany({
+      where: { userId: user.id, status: deviceStatuses.ACTIVE },
+      data: { status: deviceStatuses.INACTIVE },
+    });
 
     await transaction.device.upsert({
       where: { userId_deviceId: { userId: user.id, deviceId } },
@@ -183,12 +146,8 @@ export const login = async (req, res, next) => {
       },
     });
 
-    return true;
+    return sessionToken;
   });
-
-  if (!activeUser) {
-    return next(new AppError(messages.auth.accountOpenOnAnotherDevice, 409));
-  }
 
   return res.status(200).json({
     message: messages.user.loginSuccess,
@@ -199,24 +158,29 @@ export const login = async (req, res, next) => {
 
 // Log out and invalidate the current session.
 export const logout = async (req, res) => {
-  await prisma.$transaction([
-    Device.updateMany({
+  await prisma.$transaction(async (transaction) => {
+    // An old logout request must not invalidate a newer login.
+    const sessionUpdate = await transaction.user.updateMany({
+      where: {
+        id: req.authUser.id,
+        sessionVersion: req.authUser.sessionVersion,
+        activeDeviceId: req.authUser.activeDeviceId,
+      },
+      data: {
+        sessionVersion: { increment: 1 },
+        activeDeviceId: null,
+        activeSessionExpiresAt: null,
+      },
+    });
+    if (sessionUpdate.count) await transaction.device.updateMany({
       where: {
         userId: req.authUser.id,
         deviceId: req.authUser.activeDeviceId,
         status: deviceStatuses.ACTIVE,
       },
       data: { status: deviceStatuses.INACTIVE },
-    }),
-    User.update({
-      where: { id: req.authUser.id },
-      data: {
-        sessionVersion: { increment: 1 },
-        activeDeviceId: null,
-        activeSessionExpiresAt: null,
-      },
-    }),
-  ]);
+    });
+  });
 
   return res.status(200).json({
     message: messages.user.logoutSuccess,

@@ -36,6 +36,51 @@ test("PostgreSQL security, concurrency, outbox and password recovery", { skip: !
     const next = (error) => { if (error) throw error; };
     const password = await bcrypt.hash("Before123!", 10);
     const createUser = (name, role) => prisma.user.create({ data: { name, email: `${name}@example.com`, phone: "+201012345678", password, roles: role } });
+    await t.test("concurrent logins replace the previous session and leave one valid device", async () => {
+      const { login, logout } = await import("../src/modules/auth/auth.controller.js");
+      const { isAuthenticated } = await import("../src/middleware/authentication.js");
+      const { verifyToken } = await import("../src/utils/token.js");
+      const previousSecret = process.env.SECRET_KEY;
+      const previousTtl = process.env.ACCESS_TOKEN_TTL;
+      try {
+        process.env.SECRET_KEY = "integration-session-test-secret";
+        for (const ttl of ["none", "5h"]) {
+          process.env.ACCESS_TOKEN_TTL = ttl;
+          const account = await createUser(`session-${ttl}`, "student");
+          await prisma.user.update({ where: { id: account.id }, data: { isVerified: true } });
+          const signIn = async (ip) => {
+            const res = response();
+            await login({ body: { email: account.email, password: "Before123!" }, ip, get: () => "Integration browser" }, res, next);
+            assert.equal(res.statusCode, 200);
+            return res.body.token;
+          };
+          const authenticate = async (token) => {
+            const req = { headers: { token } };
+            await isAuthenticated()(req, response(), next);
+            return req.authUser;
+          };
+          const oldToken = await signIn("192.0.2.1");
+          const oldAuthUser = await authenticate(oldToken);
+          const tokens = await Promise.all([signIn("192.0.2.2"), signIn("192.0.2.3")]);
+          const saved = await prisma.user.findUnique({ where: { id: account.id } });
+          const current = tokens.find((token) => verifyToken(token).sessionVersion === saved.sessionVersion);
+          assert.ok(current);
+          await authenticate(current);
+          for (const token of [oldToken, ...tokens.filter((token) => token !== current)]) {
+            await assert.rejects(authenticate(token), (error) => error.statusCode === 401);
+          }
+          assert.equal(await prisma.device.count({ where: { userId: account.id, status: "active" } }), 1);
+          await logout({ authUser: oldAuthUser }, response());
+          const currentAuthUser = await authenticate(current);
+          await logout({ authUser: currentAuthUser }, response());
+          await assert.rejects(authenticate(current), (error) => error.statusCode === 401);
+          await prisma.user.delete({ where: { id: account.id } });
+        }
+      } finally {
+        if (previousSecret === undefined) delete process.env.SECRET_KEY; else process.env.SECRET_KEY = previousSecret;
+        if (previousTtl === undefined) delete process.env.ACCESS_TOKEN_TTL; else process.env.ACCESS_TOKEN_TTL = previousTtl;
+      }
+    });
     const supers = await Promise.all([createUser("super-one", "super_admin"), createUser("super-two", "super_admin")]);
 
     await t.test("concurrent suspension cannot remove all active super admins", async () => {
