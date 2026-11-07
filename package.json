@@ -1,0 +1,41 @@
+{
+  "name": "mazen-warehouse",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-concurrency=1",
+    "test:integration": "node --test --test-concurrency=1 tests/security.integration.test.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
+    "@sparticuz/chromium": "^147.0.0",
+    "axios": "^1.21.0",
+    "bcrypt": "^6.0.0",
+    "cloudinary": "^2.9.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "joi": "^18.3.2",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.12.0",
+    "multer": "^2.5.0",
+    "nanoid": "^5.1.16",
+    "nodemailer": "^10.3.1",
+    "path": "^0.12.7",
+    "pg": "^8.23.1",
+    "puppeteer": "^25.16.0",
+    "puppeteer-core": "^25.16.0",
+    "slugify": "^1.6.9"
+  },
+  "devDependencies": {
+    "prisma": "^7.10.1"
+  }
+}

@@ -1,0 +1,15 @@
+config/
+.env
+.env.*
+!.env.example
+.git/
+.aws/
+.codex/
+.agents/
+.idea/
+.vscode/
+tests/
+coverage/
+*.log
+*.postman_collection.json
+SECURITY-AUDIT*.json

@@ -1,0 +1,29 @@
+/node_modules
+/config
+/generated
+.vercel
+
+# Environment variables and local credentials.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.aws/
+.codex/
+.agents/
+
+# Logs, test output, and temporary files.
+*.log
+npm-debug.log*
+coverage/
+.nyc_output/
+tmp/
+temp/
+*.tmp
+
+# Local editor and operating system files.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,1 @@
+export { Course } from "../index.js";

@@ -1,0 +1,6 @@
+ALTER TABLE "platform_settings"
+ADD COLUMN "platformName" VARCHAR(150) NOT NULL DEFAULT 'Noldg Academy',
+ADD COLUMN "supportEmail" VARCHAR(320) NOT NULL DEFAULT '',
+ADD COLUMN "supportPhone" VARCHAR(64) NOT NULL DEFAULT '',
+ADD COLUMN "socialLinks" JSONB NOT NULL DEFAULT '{}',
+ADD COLUMN "paymentInstructions" TEXT NOT NULL DEFAULT '';

@@ -1,0 +1,653 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                      String    @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  name                    String    @unique @db.VarChar(255)
+  email                   String    @unique @db.VarChar(320)
+  phone                   String    @db.VarChar(64)
+  password                String    @db.VarChar(255)
+  isVerified              Boolean   @default(true)
+  status                  String    @default("active") @db.VarChar(32)
+  sessionVersion          Int       @default(0)
+  activeDeviceId          String?   @db.VarChar(255)
+  activeSessionExpiresAt  DateTime? @db.Timestamptz(3)
+  roles                   String    @default("student") @db.VarChar(32)
+  createdAt               DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime  @updatedAt @db.Timestamptz(3)
+
+  devices                 Device[]
+  passwordReset           PasswordReset?
+  notificationConnections NotificationConnection[]
+  teacherProfile          TeacherProfile? @relation("TeacherUser")
+  reviewedTeacherProfiles TeacherProfile[] @relation("TeacherReviewer")
+  courses                 Course[] @relation("CourseTeacher")
+  studentProductAccess    ProductAccess[] @relation("ProductAccessStudent")
+  confirmedProductAccess  ProductAccess[] @relation("ProductAccessConfirmer")
+  studentOrders           Order[] @relation("OrderStudent")
+  teacherOrders           Order[] @relation("OrderTeacher")
+  createdOrders           Order[] @relation("OrderCreator")
+  submittedPayments       Payment[] @relation("PaymentSubmitter")
+  orderApprovals          OrderApproval[]
+  orderNotifications      OrderNotification[]
+  givenTeacherRatings     TeacherRating[] @relation("RatingStudent")
+  receivedTeacherRatings  TeacherRating[] @relation("RatingTeacher")
+  notifications           Notification[]
+  studentLedgerEntries    LedgerEntry[] @relation("LedgerStudent")
+  teacherLedgerEntries    LedgerEntry[] @relation("LedgerTeacher")
+  receivedLedgerEntries   LedgerEntry[] @relation("LedgerReceiver")
+  recordedLedgerEntries   LedgerEntry[] @relation("LedgerRecorder")
+  lessonProgress          LessonProgress[]
+  playbackSessions        PlaybackSession[]
+  questions               Question[]
+  assessments             Assessment[]
+  assessmentAttempts      AssessmentAttempt[]
+  gradedAssessmentAnswers AssessmentAnswer[] @relation("AssessmentAnswerGrader")
+
+  @@map("users")
+}
+
+model SecurityRateLimit {
+  key       String   @id @db.VarChar(64)
+  count     Int      @default(1)
+  expiresAt DateTime @db.Timestamptz(3)
+
+  @@index([expiresAt])
+  @@map("security_rate_limits")
+}
+
+model PasswordReset {
+  userId         String   @id @db.VarChar(24)
+  challengeId    String   @db.VarChar(32)
+  codeHash       String   @db.VarChar(64)
+  encryptedCode  String?  @db.VarChar(128)
+  deliveryAttempts Int    @default(0)
+  nextDeliveryAt DateTime @default(now()) @db.Timestamptz(3)
+  phone          String   @db.VarChar(64)
+  sessionVersion Int
+  attempts       Int      @default(0)
+  delivered      Boolean  @default(false)
+  expiresAt      DateTime @db.Timestamptz(3)
+  lastSentAt     DateTime @default(now()) @db.Timestamptz(3)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("password_resets")
+}
+
+model NotificationConnection {
+  id        String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  userId    String   @db.VarChar(24)
+  expiresAt DateTime @db.Timestamptz(3)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
+  @@map("notification_connections")
+}
+
+model NotificationFanout {
+  id            String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  eventKey      String   @unique @db.VarChar(255)
+  payload       Json
+  cursor        String?  @db.VarChar(24)
+  status        String   @default("pending") @db.VarChar(32)
+  attempts      Int      @default(0)
+  nextAttemptAt DateTime @default(now()) @db.Timestamptz(3)
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([status, nextAttemptAt, createdAt])
+  @@map("notification_fanouts")
+}
+
+model MediaCleanupTask {
+  id            String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  asset         Json
+  resourceType  String   @db.VarChar(32)
+  authenticated Boolean  @default(true)
+  attempts      Int      @default(0)
+  status        String   @default("pending") @db.VarChar(32)
+  nextAttemptAt DateTime @default(now()) @db.Timestamptz(3)
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([status, nextAttemptAt, createdAt])
+  @@map("media_cleanup_tasks")
+}
+
+model TeacherRating {
+  id        String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  studentId String   @db.VarChar(24)
+  teacherId String   @db.VarChar(24)
+  stars     Int
+  comment   String   @default("") @db.VarChar(500)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  student User @relation("RatingStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  teacher User @relation("RatingTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, teacherId])
+  @@index([teacherId, createdAt(sort: Desc)])
+  @@map("teacher_ratings")
+}
+
+model Device {
+  id         String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  userId     String   @db.VarChar(24)
+  deviceId   String   @db.VarChar(255)
+  ipAddress  String   @db.VarChar(64)
+  userAgent  String   @default("") @db.Text
+  status     String   @default("active") @db.VarChar(32)
+  lastSeenAt DateTime @default(now()) @db.Timestamptz(3)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceId])
+  @@index([userId, status])
+  @@map("devices")
+}
+
+model StudyTrack {
+  id        String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  system    String   @db.VarChar(64)
+  stage     String   @db.VarChar(32)
+  grade     Int
+  name      String   @db.VarChar(255)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  trackSubjects    TrackSubject[]
+  teacherOfferings TeacherOffering[]
+  courses          Course[]
+
+  @@unique([system, stage, grade])
+  @@map("study_tracks")
+}
+
+model Subject {
+  id        String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  name      String   @db.VarChar(255)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  trackSubjects    TrackSubject[]
+  teacherOfferings TeacherOffering[]
+  courses          Course[]
+
+  @@index([name])
+  @@map("subjects")
+}
+
+model TrackSubject {
+  id        String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  trackId   String   @db.VarChar(24)
+  subjectId String   @db.VarChar(24)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  track   StudyTrack @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  subject Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@unique([trackId, subjectId])
+  @@map("track_subjects")
+}
+
+model TeacherProfile {
+  id                   String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  userId               String   @unique @db.VarChar(24)
+  bio                  String   @default("") @db.VarChar(1000)
+  profileImage         Json?
+  commissionPercentage Float?
+  approvalStatus       String   @default("pending") @db.VarChar(32)
+  reviewedBy           String?  @db.VarChar(24)
+  reviewedAt           DateTime? @db.Timestamptz(3)
+  createdAt            DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime @updatedAt @db.Timestamptz(3)
+
+  user      User @relation("TeacherUser", fields: [userId], references: [id], onDelete: Cascade)
+  reviewer  User? @relation("TeacherReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
+  offerings TeacherOffering[]
+
+  @@index([approvalStatus, createdAt(sort: Desc)])
+  @@map("teacher_profiles")
+}
+
+model TeacherOffering {
+  id               String @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  teacherProfileId String @db.VarChar(24)
+  trackId          String @db.VarChar(24)
+  subjectId        String @db.VarChar(24)
+
+  teacherProfile TeacherProfile @relation(fields: [teacherProfileId], references: [id], onDelete: Cascade)
+  track          StudyTrack     @relation(fields: [trackId], references: [id], onDelete: Restrict)
+  subject        Subject        @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+
+  @@unique([teacherProfileId, trackId, subjectId])
+  @@index([trackId, subjectId])
+  @@map("teacher_offerings")
+}
+
+model Course {
+  id        String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  teacherId String   @db.VarChar(24)
+  trackId   String   @db.VarChar(24)
+  subjectId String   @db.VarChar(24)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  teacher  User       @relation("CourseTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+  track    StudyTrack @relation(fields: [trackId], references: [id], onDelete: Restrict)
+  subject  Subject    @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  lessons  Lesson[]
+  products Product[]
+  assessments Assessment[]
+
+  @@unique([teacherId, trackId, subjectId])
+  @@map("courses")
+}
+
+model Lesson {
+  id            String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  courseId      String   @db.VarChar(24)
+  title         String   @db.VarChar(150)
+  description   String   @default("") @db.Text
+  type          String   @default("recorded") @db.VarChar(32)
+  status        String   @default("draft") @db.VarChar(32)
+  isFree        Boolean  @default(false)
+  prerequisiteLessonId String? @db.VarChar(24)
+  requiredWatchPercentage Float @default(100)
+  availableFrom DateTime @db.Timestamptz(3)
+  availableUntil DateTime @db.Timestamptz(3)
+  video         Json?
+  attachments   Json     @default("[]")
+  publishedAt   DateTime? @db.Timestamptz(3)
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+
+  course  Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  product Product?
+  prerequisite Lesson? @relation("LessonPrerequisite", fields: [prerequisiteLessonId], references: [id], onDelete: Restrict)
+  dependentLessons Lesson[] @relation("LessonPrerequisite")
+  progress LessonProgress[]
+  playbackSessions PlaybackSession[]
+  assessments Assessment[] @relation("AssessmentLesson")
+  watchedAssessments Assessment[] @relation("AssessmentWatchLesson")
+
+  @@index([courseId, status, availableFrom, availableUntil])
+  @@index([availableUntil])
+  @@map("lessons")
+}
+
+model Product {
+  id                   String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  courseId             String   @db.VarChar(24)
+  lessonId             String?  @unique @db.VarChar(24)
+  type                 String   @db.VarChar(32)
+  name                 String   @db.VarChar(255)
+  price                Int
+  announcedLessonCount Int?
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime @updatedAt @db.Timestamptz(3)
+
+  course   Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lesson   Lesson?        @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  accesses ProductAccess[]
+  orders   Order[]
+  ledgerEntries LedgerEntry[]
+
+  @@index([courseId, type])
+  @@index([courseId, name, type])
+  @@map("products")
+}
+
+model ProductAccess {
+  id          String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  studentId   String   @db.VarChar(24)
+  productId   String   @db.VarChar(24)
+  confirmedBy String?  @db.VarChar(24)
+  source      String   @default("purchase") @db.VarChar(32)
+  reason      String   @default("") @db.VarChar(1000)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  student   User    @relation("ProductAccessStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  confirmer User?   @relation("ProductAccessConfirmer", fields: [confirmedBy], references: [id], onDelete: SetNull)
+
+  @@unique([studentId, productId])
+  @@index([productId])
+  @@map("product_accesses")
+}
+
+model PlatformSettings {
+  id                   String   @id @default("platform") @db.VarChar(32)
+  settingsKey          String   @unique @default("platform") @db.VarChar(32)
+  commissionPercentage Float    @default(20)
+  platformName         String   @default("Noldg Academy") @db.VarChar(150)
+  supportEmail         String   @default("") @db.VarChar(320)
+  supportPhone         String   @default("") @db.VarChar(64)
+  socialLinks          Json     @default("{}")
+  paymentInstructions  String   @default("") @db.Text
+  createdAt            DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("platform_settings")
+}
+
+model Order {
+  id                   String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  referenceNumber      String   @unique @db.VarChar(64)
+  studentId            String   @db.VarChar(24)
+  teacherId            String   @db.VarChar(24)
+  productId            String   @db.VarChar(24)
+  createdBy            String   @db.VarChar(24)
+  productName          String   @db.VarChar(255)
+  productType          String   @db.VarChar(32)
+  status               String   @default("pending_payment") @db.VarChar(32)
+  fullPrice            Int
+  salePrice            Int
+  announcedLessonCount Int
+  remainingLessonCount Int
+  commissionPercentage Float
+  platformAmount       Float
+  teacherAmount        Float
+  calculatedAt         DateTime @db.Timestamptz(3)
+  createdAt            DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime @updatedAt @db.Timestamptz(3)
+
+  student       User @relation("OrderStudent", fields: [studentId], references: [id], onDelete: Restrict)
+  teacher       User @relation("OrderTeacher", fields: [teacherId], references: [id], onDelete: Restrict)
+  creator       User @relation("OrderCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  product       Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  payment       Payment?
+  approval      OrderApproval?
+  notifications OrderNotification[]
+  ledgerEntry   LedgerEntry?
+
+  @@index([studentId, createdAt(sort: Desc)])
+  @@index([teacherId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("orders")
+}
+
+model Payment {
+  id          String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  orderId     String   @unique @db.VarChar(24)
+  submittedBy String   @db.VarChar(24)
+  method      String   @default("manual") @db.VarChar(32)
+  status      String   @default("submitted") @db.VarChar(32)
+  amount      Int
+  notes       String   @default("") @db.VarChar(1000)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  order     Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  submitter User @relation("PaymentSubmitter", fields: [submittedBy], references: [id], onDelete: Restrict)
+  ledgerEntry LedgerEntry?
+
+  @@map("payments")
+}
+
+model OrderApproval {
+  id         String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  orderId    String   @unique @db.VarChar(24)
+  reviewedBy String   @db.VarChar(24)
+  status     String   @db.VarChar(32)
+  reason     String   @default("") @db.VarChar(1000)
+  reviewedAt DateTime @default(now()) @db.Timestamptz(3)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
+  order    Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  reviewer User @relation(fields: [reviewedBy], references: [id], onDelete: Restrict)
+
+  @@map("order_approvals")
+}
+
+model OrderNotification {
+  id        String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  orderId   String   @db.VarChar(24)
+  userId    String   @db.VarChar(24)
+  readAt    DateTime? @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user  User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, userId])
+  @@index([userId, readAt, createdAt(sort: Desc)])
+  @@map("order_notifications")
+}
+
+model Notification {
+  id        String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  userId    String   @db.VarChar(24)
+  type      String   @db.VarChar(64)
+  title     String   @db.VarChar(255)
+  body      String   @db.Text
+  entityId  String   @db.VarChar(24)
+  eventKey  String   @db.VarChar(255)
+  readAt    DateTime? @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, eventKey])
+  @@index([userId, readAt, createdAt(sort: Desc)])
+  @@map("notifications")
+}
+
+model LedgerEntry {
+  id                   String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  type                 String   @db.VarChar(32)
+  referenceNumber      String   @unique @db.VarChar(64)
+  orderId              String?  @unique @db.VarChar(24)
+  paymentId            String?  @unique @db.VarChar(24)
+  studentId            String?  @db.VarChar(24)
+  productId            String?  @db.VarChar(24)
+  teacherId            String   @db.VarChar(24)
+  receivedBy           String   @db.VarChar(24)
+  recordedBy           String   @db.VarChar(24)
+  amount               Decimal  @db.Decimal(14, 2)
+  platformAmount       Decimal  @db.Decimal(14, 2)
+  teacherAmount        Decimal  @db.Decimal(14, 2)
+  commissionPercentage Decimal? @db.Decimal(5, 2)
+  currency             String   @default("EGP") @db.VarChar(3)
+  productName          String?  @db.VarChar(255)
+  notes                String   @default("") @db.VarChar(1000)
+  idempotencyKey       String?  @unique @db.VarChar(128)
+  isHistorical         Boolean  @default(false)
+  occurredAt           DateTime @default(now()) @db.Timestamptz(3)
+  createdAt            DateTime @default(now()) @db.Timestamptz(3)
+
+  order    Order?   @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  payment  Payment? @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  student  User?    @relation("LedgerStudent", fields: [studentId], references: [id], onDelete: Restrict)
+  teacher  User     @relation("LedgerTeacher", fields: [teacherId], references: [id], onDelete: Restrict)
+  receiver User     @relation("LedgerReceiver", fields: [receivedBy], references: [id], onDelete: Restrict)
+  recorder User     @relation("LedgerRecorder", fields: [recordedBy], references: [id], onDelete: Restrict)
+  product  Product? @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([occurredAt(sort: Desc), id])
+  @@index([teacherId, receivedBy, type])
+  @@index([studentId, occurredAt(sort: Desc)])
+  @@map("ledger_entries")
+}
+
+model LessonProgress {
+  id              String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  studentId       String   @db.VarChar(24)
+  lessonId        String   @db.VarChar(24)
+  videoPublicId   String   @db.VarChar(255)
+  durationSeconds Float
+  watchedRanges   Json     @default("[]")
+  watchedSeconds  Float    @default(0)
+  lastPosition    Float    @default(0)
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+
+  student User   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lesson  Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, lessonId, videoPublicId])
+  @@map("lesson_progress")
+}
+
+model PlaybackSession {
+  id                 String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  studentId          String   @db.VarChar(24)
+  lessonId           String   @db.VarChar(24)
+  videoPublicId      String   @db.VarChar(255)
+  durationSeconds    Float
+  authSessionVersion Int
+  deviceId           String   @db.VarChar(255)
+  status             String   @default("active") @db.VarChar(32)
+  lastPosition       Float    @default(0)
+  playbackRate       Float    @default(1)
+  isPlaying          Boolean  @default(true)
+  timeBudgetSeconds  Float    @default(0)
+  lastSequence       Int      @default(0)
+  lastHeartbeatAt    DateTime @default(now()) @db.Timestamptz(3)
+  expiresAt          DateTime @db.Timestamptz(3)
+  closedAt           DateTime? @db.Timestamptz(3)
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @db.Timestamptz(3)
+
+  student User   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lesson  Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, status])
+  @@map("playback_sessions")
+}
+
+model Question {
+  id            String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  teacherId     String   @db.VarChar(24)
+  text          String   @db.Text
+  type          String   @db.VarChar(32)
+  options       Json     @default("[]")
+  correctAnswer Json?
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+
+  teacher User @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  assessmentQuestions AssessmentQuestion[]
+
+  @@index([teacherId, type, createdAt(sort: Desc)])
+  @@map("questions")
+}
+
+model Assessment {
+  id                      String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  teacherId               String   @db.VarChar(24)
+  courseId                String   @db.VarChar(24)
+  lessonId                String?  @db.VarChar(24)
+  title                   String   @db.VarChar(150)
+  instructions            String   @default("") @db.Text
+  type                    String   @db.VarChar(32)
+  status                  String   @default("draft") @db.VarChar(32)
+  maxAttempts             Int      @default(1)
+  durationMinutes         Int?
+  opensAt                 DateTime? @db.Timestamptz(3)
+  closesAt                DateTime? @db.Timestamptz(3)
+  watchLessonId           String?  @db.VarChar(24)
+  requiredWatchPercentage Float    @default(100)
+  totalPoints             Float
+  publishedAt             DateTime? @db.Timestamptz(3)
+  closedAt                DateTime? @db.Timestamptz(3)
+  createdAt               DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime @updatedAt @db.Timestamptz(3)
+
+  teacher     User @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  course      Course @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  lesson      Lesson? @relation("AssessmentLesson", fields: [lessonId], references: [id], onDelete: Restrict)
+  watchLesson Lesson? @relation("AssessmentWatchLesson", fields: [watchLessonId], references: [id], onDelete: Restrict)
+  questions   AssessmentQuestion[]
+  attempts    AssessmentAttempt[]
+
+  @@index([teacherId, createdAt(sort: Desc)])
+  @@index([courseId, status])
+  @@index([status, closesAt])
+  @@map("assessments")
+}
+
+model AssessmentQuestion {
+  id              String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  assessmentId    String   @db.VarChar(24)
+  sourceQuestionId String? @db.VarChar(24)
+  position        Int
+  text            String   @db.Text
+  type            String   @db.VarChar(32)
+  options         Json     @default("[]")
+  correctAnswer   Json?
+  points          Float
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  source     Question? @relation(fields: [sourceQuestionId], references: [id], onDelete: SetNull)
+  answers    AssessmentAnswer[]
+
+  @@unique([assessmentId, position])
+  @@map("assessment_questions")
+}
+
+model AssessmentAttempt {
+  id            String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  assessmentId  String   @db.VarChar(24)
+  studentId     String   @db.VarChar(24)
+  attemptNumber Int
+  status        String   @default("in_progress") @db.VarChar(32)
+  lastSequence  Int      @default(0)
+  totalPoints   Float
+  autoScore     Float    @default(0)
+  score         Float?
+  submissionReason String? @db.VarChar(32)
+  startedAt     DateTime @default(now()) @db.Timestamptz(3)
+  expiresAt     DateTime? @db.Timestamptz(3)
+  submittedAt   DateTime? @db.Timestamptz(3)
+  gradedAt      DateTime? @db.Timestamptz(3)
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Restrict)
+  student    User @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  answers    AssessmentAnswer[]
+
+  @@unique([assessmentId, studentId, attemptNumber])
+  @@index([studentId, assessmentId, attemptNumber(sort: Desc)])
+  @@index([status, expiresAt])
+  @@map("assessment_attempts")
+}
+
+model AssessmentAnswer {
+  id                   String   @id @default(dbgenerated("substr(md5(random()::text || clock_timestamp()::text), 1, 24)")) @db.VarChar(24)
+  attemptId            String   @db.VarChar(24)
+  assessmentQuestionId String   @db.VarChar(24)
+  answer               Json?
+  pointsAwarded        Float?
+  feedback             String   @default("") @db.VarChar(1000)
+  gradedBy             String?  @db.VarChar(24)
+  gradedAt             DateTime? @db.Timestamptz(3)
+  createdAt            DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime @updatedAt @db.Timestamptz(3)
+
+  attempt  AssessmentAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question AssessmentQuestion @relation(fields: [assessmentQuestionId], references: [id], onDelete: Restrict)
+  grader   User? @relation("AssessmentAnswerGrader", fields: [gradedBy], references: [id], onDelete: Restrict)
+
+  @@unique([attemptId, assessmentQuestionId])
+  @@map("assessment_answers")
+}

@@ -1,0 +1,1 @@
+export { ProductAccess } from "../index.js";
